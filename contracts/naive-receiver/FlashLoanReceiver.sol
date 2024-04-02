@@ -34,10 +34,10 @@ contract FlashLoanReceiver is IERC3156FlashBorrower {
                 revert(0x1c, 0x04)
             }
         }
-        
+
         if (token != ETH)
             revert UnsupportedCurrency();
-        
+
         uint256 amountToBeRepaid;
         unchecked {
             amountToBeRepaid = amount + fee;
@@ -45,6 +45,7 @@ contract FlashLoanReceiver is IERC3156FlashBorrower {
 
         _executeActionDuringFlashLoan();
 
+        // bug: malicious user can make loans on behalf of this contract, and this contract pays the fees
         // Return funds to pool
         SafeTransferLib.safeTransferETH(pool, amountToBeRepaid);
 

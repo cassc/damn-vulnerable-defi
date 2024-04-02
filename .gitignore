@@ -1,6 +1,5 @@
 node_modules
 build
-contracts/player-contracts/*.sol
 *.solved.js
 *.solved.json
 cache
@@ -8,3 +7,5 @@ cache
 .vscode
 artifacts
 cache
+/.history/
+/.lh/
