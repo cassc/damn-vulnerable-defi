@@ -29,6 +29,8 @@ contract TrusterLenderPool is ReentrancyGuard {
         uint256 balanceBefore = token.balanceOf(address(this));
 
         token.transfer(borrower, amount);
+        // Unsafe external address combined with unvalidated user provided input.
+        // This basically allows executing arbitrary code with the `pool` as caller
         target.functionCall(data);
 
         if (token.balanceOf(address(this)) < balanceBefore)

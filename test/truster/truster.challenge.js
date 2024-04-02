@@ -22,10 +22,14 @@ describe('[Challenge] Truster', function () {
     });
 
     it('Execution', async function () {
-        /** CODE YOUR SOLUTION HERE */
+      /** CODE YOUR SOLUTION HERE */
+      [deployer, player] = await ethers.getSigners();
+      const AttackerFactory = await ethers.getContractFactory('TrusterLenderPoolAttacker', player);
+      const attacker = await AttackerFactory.deploy();
+      expect(await attacker.connect(player).attack(pool.address));
     });
 
-    after(async function () {
+  after(async function () {
         /** SUCCESS CONDITIONS - NO NEED TO CHANGE ANYTHING HERE */
 
         // Player has taken all tokens from the pool
@@ -37,4 +41,3 @@ describe('[Challenge] Truster', function () {
         ).to.equal(0);
     });
 });
-
