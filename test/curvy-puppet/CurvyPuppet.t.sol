@@ -158,7 +158,46 @@ contract CurvyPuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_curvyPuppet() public checkSolvedByPlayer {
-        
+        weth.transferFrom(treasury, player, TREASURY_WETH_BALANCE);
+        weth.withdraw(100 ether);
+        weth.approve(address(curvePool), type(uint256).max);
+        stETH.approve(address(curvePool), type(uint256).max);
+
+        uint256 borrowedValue = lending.getBorrowValue(lending.getBorrowAmount(alice));
+        uint256 collateralValue = lending.getCollateralValue(lending.getCollateralAmount(alice));
+
+        uint256 lpPrice = curvePool.get_virtual_price();
+
+        uint256 received = curvePool.exchange{value: 100 ether}(0, 1, 100 ether, 99 ether); // stEth
+
+        uint256 lpTokenAmount = curvePool.add_liquidity([0, uint256(99 ether)], block.timestamp + 1 days);
+
+        // assertEq(lpPrice,curvePool.get_virtual_price(), "LP token price changed before adding liquidity");
+
+        uint256 newBorrowedValue = lending.getBorrowValue(lending.getBorrowAmount(alice));
+        uint256 newCollateralValue = lending.getCollateralValue(lending.getCollateralAmount(alice));
+
+        assertEq(newCollateralValue, collateralValue, "Collateral value changed after adding liquidity");
+        assertEq(newBorrowedValue, borrowedValue, "Borrowed value changed after adding liquidity");
+
+
+        // IERC20(curvePool.lp_token()).transferFrom(treasury, player, TREASURY_LP_BALANCE);
+
+        // // weth.approve(address(curvePool), TREASURY_WETH_BALANCE);
+
+
+
+
+
+        // uint256 lpPrice = curvePool.get_virtual_price();
+
+        // curvePool.remove_liquidity_one_coin(
+        //     TREASURY_LP_BALANCE,
+        //     0, // Remove WETH
+        //     0 // Min amount of WETH
+        // );
+
+        // assertTrue(curvePool.get_virtual_price() > lpPrice, "LP token price did not increase");
     }
 
     /**
