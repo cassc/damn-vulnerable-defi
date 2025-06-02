@@ -226,6 +226,10 @@ contract CurvyPuppetChallenge is Test {
             expiration: uint48(block.timestamp + 1 days)
         });
         lending.deposit(0);
+        // lending.withdraw(1);
+        // lending.borrow(1);
+        // lending.redeem(1);
+        // lending.liquidate(address(this));
 
         // // IERC20(curvePool.lp_token()).transferFrom(treasury, player, TREASURY_LP_BALANCE);
         // weth.transferFrom(treasury, address(this), TREASURY_WETH_BALANCE);
