@@ -429,3 +429,8 @@ contract Rescuer {
         lending.liquidate(users[0]);
     }
 }
+
+// What i leant:
+// - Trial and error to get the max value in lending pool
+// - Do some math to get the expected ratio which can tirgger the liquidity
+// - Place the callback right with the bad state occurs
