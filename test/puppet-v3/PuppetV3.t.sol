@@ -181,9 +181,9 @@ contract PuppetV3Challenge is Test {
 
         (int256 amount0, int256 amount1) = uniswapPool.swap(
             address(this),
-            false,
-            1,
-            10, // how to find this value, i always get SPL revert
+            true,
+            100 ether ,
+            uint160(1 << 96) * 10 / 100,
             bytes("")
         );
 
