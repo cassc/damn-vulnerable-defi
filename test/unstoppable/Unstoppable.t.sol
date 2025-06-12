@@ -91,6 +91,9 @@ contract UnstoppableChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_unstoppable() public checkSolvedByPlayer {
+        // This condition in UnstoppableVault is broken:
+        //    convertToShares(totalSupply) != balanceBefore
+        // because direct asset transfer to the vault bypasses the normal `ERC4626:deposit` flow, as a result no vault token is minted
         token.transfer(address(vault), 1);
     }
 
