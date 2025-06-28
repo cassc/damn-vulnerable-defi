@@ -175,11 +175,14 @@ contract Rescuer{
             uint256 purchasedIndex = marketplace.fill(1, want);
             marketplace.cancel(1, purchasedIndex);
             uint256 balance = token.balanceOf(address(this));
+            // Compute how many shards we can buy with the received token:
             // want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS = balance
             // want = balance * NFT_OFFER_SHARDS / (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6)
             want = balance.mulDivUp(NFT_OFFER_SHARDS, (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6)) - 1;
             uint256 profit = ( want * MARKETPLACE_INITIAL_RATE / 1e6 ) - ( want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS );
-            while(profit > token.balanceOf(address(marketplace))) { // profit can be larger than what's left in the marketplace
+
+            // Profit can be larger than what's left in the marketplace, reduce the amount to buy in half each time
+            while(profit > token.balanceOf(address(marketplace))) {
                 want = want / 2;
                 profit = ( want * MARKETPLACE_INITIAL_RATE / 1e6 ) - ( want * (NFT_OFFER_PRICE * MARKETPLACE_INITIAL_RATE / 1e6) / NFT_OFFER_SHARDS );
                 if (want == 0){
